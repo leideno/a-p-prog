@@ -75,7 +75,12 @@
     #define ISP_CLK_OUT   do { ISP_GPIO_PORT->MODER = (ISP_GPIO_PORT->MODER & ~(3U << (2 * ISP_CLK_PIN))) | (1U << (2 * ISP_CLK_PIN)); } while (0)
 #endif
 
-#define ISP_CLK_DELAY  6
+#if defined(ARDUINO_ARCH_STM32)
+#define ISP_CLK_DELAY  6     // Tune this: 4–10 is a good starting range at 84–100 MHz
+#else
+#define ISP_CLK_DELAY  1
+#endif
+
 #define DELAY3  delay_us(ISP_CLK_DELAY * 3)
 #define DELAY   delay_us(ISP_CLK_DELAY)
 
