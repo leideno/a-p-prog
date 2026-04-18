@@ -1,86 +1,141 @@
 /*
  * pp programmer, for SW 0.99 and higher
+ * Updated & cleaned for STM32F401CE (STM32Duino core)
  */
 
+#if defined(ARDUINO_ARCH_AVR)
 #include <avr/io.h>
 #include <util/delay.h>
+#endif
 
-#include "pp_ops/fw_pp_ops.h"
+#include "fw_pp_ops/fw_pp_ops.h"
+
+#if defined(ARDUINO_ARCH_AVR)
+#define delay_us(x) _delay_us(x)
+#define delay_ms(x) _delay_ms(x)
+#else
+#define delay_us(x) delayMicroseconds(x)
+#define delay_ms(x) delay(x)
+#endif
 
 // #define DEBUG
 // #define DEBUG_VERBOSE
-#define BAUD	57600	// Baud rate (9600 is default)
+#define BAUD  57600
 
+// ==================== PIN DEFINITIONS ====================
 #if defined(ARDUINO_AVR_UNO)
-    // Arduino UNO
     #define ISP_PORT  PORTC
     #define ISP_DDR   DDRC
     #define ISP_PIN   PINC
-    #define ISP_MCLR_BIT  3     // A3 (PC3)
-    #define ISP_DAT_BIT   1     // A1 (PC1)
-    #define ISP_CLK_BIT   0     // A0 (PC0)
+    #define ISP_MCLR_BIT  3
+    #define ISP_DAT_BIT   1
+    #define ISP_CLK_BIT   0
 #elif defined(ARDUINO_AVR_LEONARDO)
-    // Arduino Leonardo
     #define ISP_PORT  PORTF
     #define ISP_DDR   DDRF
     #define ISP_PIN   PINF
-    #define ISP_MCLR_BIT  4     // A3 (PF4)
-    #define ISP_DAT_BIT   6     // A1 (PF6)
-    #define ISP_CLK_BIT   7     // A0 (PF7)
+    #define ISP_MCLR_BIT  4
+    #define ISP_DAT_BIT   6
+    #define ISP_CLK_BIT   7
+#elif defined(ARDUINO_ARCH_STM32)
+    #define ISP_GPIO_PORT GPIOA
+    #define ISP_MCLR_PIN  3     // PA3
+    #define ISP_DAT_PIN   1     // PA1
+    #define ISP_CLK_PIN   0     // PA0
 #else
-    #error Unsupported board selection.
+    #error Unsupported board
 #endif
 
-#define  ISP_MCLR(v)  do { if (v) ISP_PORT |=  (1<<ISP_MCLR_BIT); else ISP_PORT &= ~(1<<ISP_MCLR_BIT); } while (0)
-#define  ISP_MCLR_IN  do { ISP_DDR  &= ~(1<<ISP_MCLR_BIT); } while (0)
-#define  ISP_MCLR_OUT do { ISP_DDR  |=  (1<<ISP_MCLR_BIT); } while (0)
+// ==================== GPIO MACROS ====================
+#if defined(ARDUINO_ARCH_AVR)
+    #define ISP_MCLR(v)   do { if (v) ISP_PORT |=  (1<<ISP_MCLR_BIT); else ISP_PORT &= ~(1<<ISP_MCLR_BIT); } while (0)
+    #define ISP_MCLR_IN   do { ISP_DDR  &= ~(1<<ISP_MCLR_BIT); } while (0)
+    #define ISP_MCLR_OUT  do { ISP_DDR  |=  (1<<ISP_MCLR_BIT); } while (0)
 
-#define  ISP_DAT(v)   do { if (v) ISP_PORT |=  (1<<ISP_DAT_BIT);  else ISP_PORT &= ~(1<<ISP_DAT_BIT);  } while (0)
-#define  ISP_DAT_V    (ISP_PIN&(1<<ISP_DAT_BIT))
-#define  ISP_DAT_IN   do { ISP_DDR  &= ~(1<<ISP_DAT_BIT);  } while (0)
-#define  ISP_DAT_OUT  do { ISP_DDR  |=  (1<<ISP_DAT_BIT);  } while (0)
+    #define ISP_DAT(v)    do { if (v) ISP_PORT |=  (1<<ISP_DAT_BIT);  else ISP_PORT &= ~(1<<ISP_DAT_BIT);  } while (0)
+    #define ISP_DAT_V     (ISP_PIN & (1<<ISP_DAT_BIT))
+    #define ISP_DAT_IN    do { ISP_DDR  &= ~(1<<ISP_DAT_BIT);  } while (0)
+    #define ISP_DAT_OUT   do { ISP_DDR  |=  (1<<ISP_DAT_BIT);  } while (0)
 
-#define  ISP_CLK(v)   do { if (v) ISP_PORT |=  (1<<ISP_CLK_BIT);  else ISP_PORT &= ~(1<<ISP_CLK_BIT);  } while (0)
-#define  ISP_CLK_IN   do { ISP_DDR  &= ~(1<<ISP_CLK_BIT);  } while (0)
-#define  ISP_CLK_OUT  do { ISP_DDR  |=  (1<<ISP_CLK_BIT);  } while (0)
+    #define ISP_CLK(v)    do { if (v) ISP_PORT |=  (1<<ISP_CLK_BIT);  else ISP_PORT &= ~(1<<ISP_CLK_BIT);  } while (0)
+    #define ISP_CLK_IN    do { ISP_DDR  &= ~(1<<ISP_CLK_BIT);  } while (0)
+    #define ISP_CLK_OUT   do { ISP_DDR  |=  (1<<ISP_CLK_BIT);  } while (0)
+#elif defined(ARDUINO_ARCH_STM32)
+    #define ISP_MCLR(v)   do { if (v) ISP_GPIO_PORT->BSRR = (1U << ISP_MCLR_PIN); else ISP_GPIO_PORT->BSRR = (1U << (ISP_MCLR_PIN + 16)); } while (0)
+    #define ISP_MCLR_IN   do { ISP_GPIO_PORT->MODER &= ~(3U << (2 * ISP_MCLR_PIN)); } while (0)
+    #define ISP_MCLR_OUT  do { ISP_GPIO_PORT->MODER = (ISP_GPIO_PORT->MODER & ~(3U << (2 * ISP_MCLR_PIN))) | (1U << (2 * ISP_MCLR_PIN)); } while (0)
 
-#define ISP_CLK_DELAY  1
-#define DELAY3 _delay_us(ISP_CLK_DELAY * 3)
-#define DELAY  _delay_us(ISP_CLK_DELAY)
+    #define ISP_DAT(v)    do { if (v) ISP_GPIO_PORT->BSRR = (1U << ISP_DAT_PIN);  else ISP_GPIO_PORT->BSRR = (1U << (ISP_DAT_PIN + 16));  } while (0)
+    #define ISP_DAT_V     (ISP_GPIO_PORT->IDR & (1U << ISP_DAT_PIN))
+    #define ISP_DAT_IN    do { ISP_GPIO_PORT->MODER &= ~(3U << (2 * ISP_DAT_PIN)); } while (0)
+    #define ISP_DAT_OUT   do { ISP_GPIO_PORT->MODER = (ISP_GPIO_PORT->MODER & ~(3U << (2 * ISP_DAT_PIN))) | (1U << (2 * ISP_DAT_PIN)); } while (0)
 
-void isp_send (unsigned int data, unsigned char n);
+    #define ISP_CLK(v)    do { if (v) ISP_GPIO_PORT->BSRR = (1U << ISP_CLK_PIN);  else ISP_GPIO_PORT->BSRR = (1U << (ISP_CLK_PIN + 16));  } while (0)
+    #define ISP_CLK_IN    do { ISP_GPIO_PORT->MODER &= ~(3U << (2 * ISP_CLK_PIN)); } while (0)
+    #define ISP_CLK_OUT   do { ISP_GPIO_PORT->MODER = (ISP_GPIO_PORT->MODER & ~(3U << (2 * ISP_CLK_PIN))) | (1U << (2 * ISP_CLK_PIN)); } while (0)
+#endif
+
+#define ISP_CLK_DELAY  6
+#define DELAY3  delay_us(ISP_CLK_DELAY * 3)
+#define DELAY   delay_us(ISP_CLK_DELAY)
+
+// ==================== FUNCTION DECLARATIONS (CLEANED) ====================
+
+void isp_send(unsigned int data, unsigned char n);
 unsigned int isp_read_16(void);
-void acquire_isp_dat_clk(void);
-void release_isp_dat_clk(void);
-unsigned char enter_progmode(void);
-unsigned char exit_progmode(void);
-void isp_read_pgm(unsigned int * data, unsigned char n);
-void isp_write_pgm(unsigned int * data, unsigned char n);
-void isp_mass_erase(void);
-void isp_reset_pointer(void);
-void isp_send_8_msb(unsigned char data);
+unsigned int isp_read_8(void);
+unsigned int isp_read_14s(void);
 unsigned int isp_read_8_msb(void);
 unsigned int isp_read_16_msb(void);
-unsigned char p16c_enter_progmode(void);
-void p16c_set_pc(unsigned long pc);
-void p16c_bulk_erase(void);
-void p16c_load_nvm(unsigned char inc, unsigned int data);
-unsigned int p16c_read_data_nvm (unsigned char inc);
-void p16c_begin_prog(unsigned char cfg_bit);
-void p16c_isp_write_cfg(unsigned int data, unsigned int addr);
-void p18q_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char n);
-void p18q_isp_write_cfg(unsigned int data, unsigned long addr);
 
-unsigned char p18_enter_progmode(void);
+void isp_send_8_msb(unsigned char data);
+void isp_send_24_msb(unsigned long data);
+
+void acquire_isp_dat_clk(void);
+void release_isp_dat_clk(void);
+
+void enter_progmode(void);
+void exit_progmode(void);
+
+void isp_read_pgm(unsigned int *data, unsigned char n);
+void isp_write_pgm(unsigned int *data, unsigned char n, unsigned char slow);
+void isp_mass_erase(void);
+void isp_reset_pointer(void);
+void isp_reset_pointer_16d(void);
+void isp_inc_pointer(void);
+void isp_send_config(unsigned int data);
+
+void p18_enter_progmode(void);
 unsigned int p18_get_ID(void);
 void p18_send_cmd_payload(unsigned char cmd, unsigned int payload);
 unsigned int p18_get_cmd_payload(unsigned char cmd);
-unsigned int isp_read_8(void);
 void p18_set_tblptr(unsigned long val);
 unsigned char p18_read_pgm_byte(void);
-void p_18_modfied_nop(void);
+void p_18_modfied_nop(unsigned char nop_long);
 void p18_isp_mass_erase(void);
+void p18fj_isp_mass_erase(void);
 void p18fk_isp_mass_erase(unsigned char data1, unsigned char data2, unsigned char data3);
+
+void p18_isp_write_pgm(unsigned int *data, unsigned long addr, unsigned char n);
+void p18fk_isp_write_pgm(unsigned int *data, unsigned long addr, unsigned char n);
+void p18_isp_write_cfg(unsigned char data1, unsigned char data2, unsigned long addr);
+void p18fk_isp_write_cfg(unsigned char data1, unsigned char data2, unsigned long addr);
+void p_18_isp_read_pgm(unsigned int *data, unsigned long addr, unsigned char n);
+
+void p16c_enter_progmode(void);
+void p16c_set_pc(unsigned long pc);
+void p16c_bulk_erase(void);
+void p16c_load_nvm(unsigned char inc, unsigned int data);
+unsigned int p16c_read_data_nvm(unsigned char inc);
+void p16c_begin_prog(unsigned char cfg_bit);
+void p16c_isp_write_pgm(unsigned int *data, unsigned long addr, unsigned char n);
+void p16c_isp_read_pgm(unsigned int *data, unsigned long addr, unsigned char n);
+void p16c_isp_write_cfg(unsigned int data, unsigned long addr);
+
+void p18q_isp_write_pgm(unsigned int *data, unsigned long addr, unsigned char n);
+void p18q_isp_write_cfg(unsigned int data, unsigned long addr);
+void p18q_isp_read_cfg(unsigned int *data, unsigned long addr, unsigned char n);
+void p18qxx_bulk_erase(void);
 
 void usart_tx_b(uint8_t data);
 uint8_t usart_rx_rdy(void);
@@ -89,45 +144,52 @@ uint8_t usart_rx_b(void);
 void exec_ops(uint8_t *ops, int n);
 
 #if defined(DEBUG)
-#define debug_print(msg ...) do { \
-    char buf[100]; \
-    sprintf(buf, msg); \
-    Serial1.println(buf); } while (0)
+    #define debug_print(msg ...) do { \
+        char buf[100]; \
+        sprintf(buf, msg); \
+        Serial1.println(buf); } while (0)
 #else
-#define debug_print(msg ...) do { } while (0)
+    #define debug_print(msg ...) do { } while (0)
 #endif
+
 #if defined(DEBUG_VERBOSE)
-#define verbose_print(msg ...) do { \
-    char buf[100]; \
-    sprintf(buf, msg); \
-    Serial1.println(buf); } while (0)
+    #define verbose_print(msg ...) do { \
+        char buf[100]; \
+        sprintf(buf, msg); \
+        Serial1.println(buf); } while (0)
 #else
-#define verbose_print(msg ...) do { } while (0)
+    #define verbose_print(msg ...) do { } while (0)
 #endif
+
+// ==================== GLOBAL VARIABLES ====================
 
 int rx_state = 0;
 int rx_message_ptr;
 unsigned char rx_message[280];
 unsigned int flash_buffer[260];
 
+// ==================== SETUP & LOOP (unchanged except includes) ====================
+
 void setup(void)
 {
-#if defined(ARDUINO_AVR_UNO)
-    uint8_t UBRR = (F_CPU/16)/BAUD - 1;	// Used for UBRRL and UBRRH
-    UBRR0H = ((UBRR) & 0xF00);
-    UBRR0L = (uint8_t) ((UBRR) & 0xFF);
-    UCSR0B |= _BV(TXEN0);
-    UCSR0B |= _BV(RXEN0);
-#endif
-
-#if defined(ARDUINO_AVR_LEONARDO)
+#if defined(ARDUINO_ARCH_AVR)
+    #if defined(ARDUINO_AVR_UNO)
+        uint16_t UBRR = (F_CPU/16)/BAUD - 1;
+        UBRR0H = (UBRR >> 8);
+        UBRR0L = (uint8_t)UBRR;
+        UCSR0B |= _BV(TXEN0) | _BV(RXEN0);
+    #elif defined(ARDUINO_AVR_LEONARDO)
+        Serial.begin(BAUD);
+        while (!Serial);
+    #endif
+#elif defined(ARDUINO_ARCH_STM32)
     Serial.begin(BAUD);
-    while (!Serial);
+    RCC->AHB1ENR |= RCC_AHB1ENR_GPIOAEN;   // Enable GPIOA
 #endif
 
 #if defined(DEBUG)
-  Serial1.begin(115200);
-  Serial1.println("Hello, debug serial!");
+    Serial1.begin(115200);
+    Serial1.println("PP Programmer - STM32 Debug");
 #endif
 
     release_isp_dat_clk();
@@ -366,17 +428,21 @@ unsigned char rx_state_machine(unsigned char state, unsigned char rx_char)
         rx_message_ptr = 0;
         rx_message[rx_message_ptr++] = rx_char;
         return 1;
+
     case 1:
         bytes_to_receive = rx_char;
         rx_message[rx_message_ptr++] = rx_char;
         if (bytes_to_receive == 0)
             return 3;
         return 2;
+
     case 2:
         rx_message[rx_message_ptr++] = rx_char;
         bytes_to_receive--;
         if (bytes_to_receive == 0)
             return 3;
+        return state;
+
     default:
         return state;
     }
@@ -385,7 +451,6 @@ unsigned char rx_state_machine(unsigned char state, unsigned char rx_char)
 void isp_read_pgm(unsigned int * data, unsigned char n)
 {
     unsigned char i;
-    //  DELAY3;
     for (i=0; i < n; i++) {
         isp_send(0x04, 6);
         data[i] = isp_read_14s();
@@ -396,7 +461,6 @@ void isp_read_pgm(unsigned int * data, unsigned char n)
 void isp_write_pgm(unsigned int * data, unsigned char n, unsigned char slow)
 {
     unsigned char i;
-    //  DELAY3;
     for (i=0; i < n; i++) {
         isp_send(0x02, 6);
         isp_send(data[i] << 1, 16);
@@ -405,9 +469,9 @@ void isp_write_pgm(unsigned int * data, unsigned char n, unsigned char slow)
     }
     isp_send(0x08, 6);
     if (slow)
-        _delay_ms(5);
+        delay_ms(5);
     else
-        _delay_ms(3);
+        delay_ms(3);
     isp_send(0x06, 6);
 }
 
@@ -419,25 +483,18 @@ void isp_send_config(unsigned int data)
 
 void isp_mass_erase(void)
 {
-    //_delay_ms(10);
-    //  DELAY3;
-    //isp_send(0x11,6);
     isp_send_config(0);
     isp_send(0x09, 6);
-    _delay_ms(10);
-    //isp_send(0x0B,6);
-    //_delay_ms(10);
+    delay_ms(10);
 }
 
 void isp_reset_pointer(void)
 {
-    //  DELAY3;
     isp_send(0x16, 6);
 }
 
 void isp_reset_pointer_16d(void)
 {
-    //  DELAY3;
     isp_send(0x1D, 6);
     isp_send(0x0, 8);
     isp_send(0x0, 8);
@@ -446,7 +503,6 @@ void isp_reset_pointer_16d(void)
 
 void isp_inc_pointer(void)
 {
-    //  DELAY3;
     isp_send(0x06, 6);
 }
 
@@ -457,7 +513,6 @@ unsigned int isp_read_16(void)
     unsigned int out;
     out = 0;
     ISP_DAT_IN;
-    //  DELAY3;
     for (i=0; i < 16; i++) {
         ISP_CLK(1);
         DELAY;
@@ -476,7 +531,6 @@ unsigned int isp_read_8(void)
     unsigned int out;
     out = 0;
     ISP_DAT_IN;
-    //  DELAY3;
     for (i=0; i < 8; i++) {
         ISP_CLK(1);
         DELAY;
@@ -491,7 +545,6 @@ unsigned int isp_read_8(void)
 
 unsigned int isp_read_14s(void)
 {
-    unsigned char i;
     unsigned int out;
     out = isp_read_16();
     out = out &0x7FFE;
@@ -503,16 +556,13 @@ void isp_send(unsigned int data, unsigned char n)
 {
     unsigned char i;
     ISP_DAT_OUT;
-    //  DELAY3;
     for (i=0; i < n; i++) {
         ISP_DAT(data & 0x01);
         DELAY;
         ISP_CLK(1);
-        //  DELAY;
         data = data >> 1;
         ISP_CLK(0);
         ISP_DAT(0);
-        //  DELAY;
     }
 }
 
@@ -520,7 +570,6 @@ void isp_send_24_msb(unsigned long data)
 {
     unsigned char i;
     ISP_DAT_OUT;
-    //  DELAY3;
     for (i=0; i < 23; i++) {
         ISP_DAT(data & 0x400000);
         DELAY;
@@ -528,7 +577,6 @@ void isp_send_24_msb(unsigned long data)
         DELAY;
         data = data << 1;
         ISP_CLK(0);
-        //  DELAY;
     }
     ISP_DAT(0);
     DELAY;
@@ -541,7 +589,6 @@ void isp_send_8_msb(unsigned char data)
 {
     unsigned char i;
     ISP_DAT_OUT;
-    //  DELAY3;
     for (i=0; i < 8; i++) {
         ISP_DAT(data & 0x80);
         DELAY;
@@ -550,7 +597,6 @@ void isp_send_8_msb(unsigned char data)
         data = data << 1;
         ISP_CLK(0);
         ISP_DAT(0);
-        //  DELAY;
     }
 }
 
@@ -560,7 +606,6 @@ unsigned int isp_read_8_msb(void)
     unsigned int out;
     out = 0;
     ISP_DAT_IN;
-    //  DELAY3;
     for (i=0; i < 8; i++) {
         ISP_CLK(1);
         DELAY;
@@ -579,7 +624,6 @@ unsigned int isp_read_16_msb(void)
     unsigned int out;
     out = 0;
     ISP_DAT_IN;
-    //  DELAY3;
     for (i=0; i < 16; i++) {
         ISP_CLK(1);
         DELAY;
@@ -606,11 +650,11 @@ void release_isp_dat_clk(void)
     ISP_DAT_IN;
 }
 
-unsigned char enter_progmode(void)
+void enter_progmode(void)
 {
     acquire_isp_dat_clk();
     ISP_MCLR(0);
-    _delay_us(300);
+    delay_us(300);
     isp_send(0b01010000, 8);
     isp_send(0b01001000, 8);
     isp_send(0b01000011, 8);
@@ -621,16 +665,16 @@ unsigned char enter_progmode(void)
 
 /**************************************************************************************************************************/
 
-unsigned char p18_enter_progmode(void)
+void p18_enter_progmode(void)
 {
     acquire_isp_dat_clk();
     ISP_MCLR(0);
-    _delay_us(300);
+    delay_us(300);
     isp_send(0b10110010, 8);
     isp_send(0b11000010, 8);
     isp_send(0b00010010, 8);
     isp_send(0b00001010, 8);
-    _delay_us(300);
+    delay_us(300);
     ISP_MCLR(1);
 }
 
@@ -642,7 +686,7 @@ void p18_isp_mass_erase(void)
     p18_send_cmd_payload(0x0C, 0x8F8F);
     p18_send_cmd_payload(0, 0x0000);
     isp_send(0x00, 4);
-    _delay_ms(20);
+    delay_ms(20);
     isp_send(0x00, 16);
 }
 
@@ -654,10 +698,9 @@ void p18fj_isp_mass_erase(void)
     p18_send_cmd_payload(0x0C, 0x8080);
     p18_send_cmd_payload(0, 0x0000);
     isp_send(0x00, 4);
-    _delay_ms(600);
+    delay_ms(600);
     isp_send(0x00, 16);
 }
-
 
 void p18fk_isp_mass_erase(unsigned char data1, unsigned char data2, unsigned char data3)
 {
@@ -676,14 +719,13 @@ void p18fk_isp_mass_erase(unsigned char data1, unsigned char data2, unsigned cha
     p18_send_cmd_payload(0x0C, tmp1);
     p18_send_cmd_payload(0x00, 0);
     isp_send(0x00, 4);
-    _delay_ms(5);
+    delay_ms(5);
     isp_send(0x00, 16);
 }
 
 void p18fk_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 {
     unsigned char i;
-    //  DELAY3;
     p18_send_cmd_payload(0, 0x8E7F);
     p18_send_cmd_payload(0, 0x9C7F);
     p18_send_cmd_payload(0, 0x847F);
@@ -697,7 +739,6 @@ void p18fk_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char 
 void p18_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 {
     unsigned char i;
-    //  DELAY3;
     p18_send_cmd_payload(0, 0x8EA6);
     p18_send_cmd_payload(0, 0x9CA6);
     p18_send_cmd_payload(0, 0x84A6);
@@ -711,20 +752,19 @@ void p18_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 void p18_isp_write_cfg(unsigned char data1, unsigned char data2, unsigned long addr)
 {
     unsigned int i;
-    //  DELAY3;
     p18_send_cmd_payload(0, 0x8EA6);
     p18_send_cmd_payload(0, 0x8CA6);
     p18_send_cmd_payload(0, 0x84A6);
     p18_set_tblptr(addr);
     p18_send_cmd_payload(0x0F, data1);
     p_18_modfied_nop(1);
-    _delay_ms(5);
+    delay_ms(5);
     p18_set_tblptr(addr + 1);
     i = data2;
     i = i << 8;
     p18_send_cmd_payload(0x0F, i);
     p_18_modfied_nop(1);
-    _delay_ms(5);
+    delay_ms(5);
 }
 
 void p18q_isp_read_cfg(unsigned int * data, unsigned long addr, unsigned char n)
@@ -733,14 +773,13 @@ void p18q_isp_read_cfg(unsigned int * data, unsigned long addr, unsigned char n)
     unsigned int retval;
     unsigned char tmp;
 
-    //  DELAY3;
     p16c_set_pc(addr);
     for (i=0; i < n; i++) {
         isp_send_8_msb(0xFE);
-        _delay_us(2);
+        delay_us(2);
         tmp = isp_read_16_msb();
         retval = isp_read_8_msb();
-        _delay_us(2);
+        delay_us(2);
         retval = retval >> 1;
         if (tmp & 0x01)
             retval = retval | 0x80;
@@ -751,19 +790,18 @@ void p18q_isp_read_cfg(unsigned int * data, unsigned long addr, unsigned char n)
 void p18fk_isp_write_cfg(unsigned char data1, unsigned char data2, unsigned long addr)
 {
     unsigned int i;
-    //  DELAY3;
     p18_send_cmd_payload(0, 0x8E7F);
     p18_send_cmd_payload(0, 0x8C7F);
     p18_set_tblptr(addr);
     p18_send_cmd_payload(0x0F, data1);
     p_18_modfied_nop(1);
-    _delay_ms(5);
+    delay_ms(5);
     p18_set_tblptr(addr + 1);
     i = data2;
     i = i << 8;
     p18_send_cmd_payload(0x0F, i);
     p_18_modfied_nop(1);
-    _delay_ms(5);
+    delay_ms(5);
 }
 
 void p_18_modfied_nop(unsigned char nop_long)
@@ -780,8 +818,8 @@ void p_18_modfied_nop(unsigned char nop_long)
     DELAY;
     ISP_CLK(1);
     if (nop_long)
-        _delay_ms(4);
-    _delay_ms(1);
+        delay_ms(4);
+    delay_ms(1);
     ISP_CLK(0);
     DELAY;
     isp_send(0x00, 16);
@@ -791,7 +829,6 @@ void p_18_isp_read_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 {
     unsigned char i;
     unsigned int tmp1, tmp2;
-    //  DELAY3;
     p18_set_tblptr(addr);
     for (i=0; i < n; i++) {
         tmp1 =  p18_read_pgm_byte();
@@ -833,7 +870,7 @@ void p18_send_cmd_payload(unsigned char cmd, unsigned int payload)
 {
     isp_send(cmd, 4);
     isp_send(payload, 16);
-    _delay_us(30);
+    delay_us(30);
 }
 
 unsigned int p18_get_cmd_payload(unsigned char cmd)
@@ -842,52 +879,52 @@ unsigned int p18_get_cmd_payload(unsigned char cmd)
     return isp_read_16();
 }
 
-unsigned char exit_progmode(void)
+void exit_progmode(void)
 {
     release_isp_dat_clk();
     ISP_MCLR(1);
-    _delay_ms(30);
+    delay_ms(30);
     ISP_MCLR(0);
-    _delay_ms(30);
+    delay_ms(30);
     ISP_MCLR(1);
 }
 
 //***********************************************************************************//
 
-unsigned char p16c_enter_progmode(void)
+void p16c_enter_progmode(void)
 {
     acquire_isp_dat_clk();
     ISP_MCLR(0);
-    _delay_us(300);
+    delay_us(300);
     isp_send_8_msb(0x4d);
     isp_send_8_msb(0x43);
     isp_send_8_msb(0x48);
     isp_send_8_msb(0x50);
-    _delay_us(300);
+    delay_us(300);
 }
 
 void p16c_set_pc(unsigned long pc)
 {
     isp_send_8_msb(0x80);
-    _delay_us(2);
+    delay_us(2);
     isp_send_24_msb(pc);
 }
 
 void p16c_bulk_erase(void)
 {
     isp_send_8_msb(0x18);
-    _delay_ms(100);
+    delay_ms(100);
 }
 
-void p16c_load_nvm(unsigned int data, unsigned char inc)
+void p16c_load_nvm(unsigned char inc, unsigned int data)
 {
     if (inc==0)
         isp_send_8_msb(0x00);
     else
         isp_send_8_msb(0x02);
-    _delay_us(2);
+    delay_us(2);
     isp_send_24_msb(data);
-    _delay_us(2);
+    delay_us(2);
 }
 
 unsigned int p16c_read_data_nvm(unsigned char inc)
@@ -898,7 +935,7 @@ unsigned int p16c_read_data_nvm(unsigned char inc)
         isp_send_8_msb(0xFC);
     else
         isp_send_8_msb(0xFE);
-    _delay_us(2);
+    delay_us(2);
     tmp = isp_read_8_msb();
     retval = isp_read_16_msb();
     retval = retval >> 1;
@@ -910,9 +947,9 @@ unsigned int p16c_read_data_nvm(unsigned char inc)
 void p16c_begin_prog(unsigned char cfg_bit)
 {
     isp_send_8_msb(0xE0);
-    _delay_ms(3);
+    delay_ms(3);
     if (cfg_bit)
-        _delay_ms(3);
+        delay_ms(3);
 }
 
 unsigned int p16c_get_ID(void)
@@ -924,10 +961,9 @@ unsigned int p16c_get_ID(void)
 void p16c_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 {
     unsigned char i;
-    //  DELAY3;
     p16c_set_pc(addr);
     for (i=0; i < n; i++)
-        p16c_load_nvm(data[i], 1);
+        p16c_load_nvm(1, data[i]);
     p16c_set_pc(addr);
     p16c_begin_prog(0);
 }
@@ -935,8 +971,6 @@ void p16c_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char n
 void p16c_isp_read_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 {
     unsigned char i;
-    unsigned int tmp1, tmp2;
-    //  DELAY3;
     p16c_set_pc(addr);
     for (i=0; i < n; i++)
         data[i] = p16c_read_data_nvm(1);
@@ -944,43 +978,38 @@ void p16c_isp_read_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 
 void p16c_isp_write_cfg(unsigned int data, unsigned long addr)
 {
-    unsigned char i;
-    //  DELAY3;
     p16c_set_pc(addr);
-    p16c_load_nvm(data,0);
+    p16c_load_nvm(0, data);
     p16c_begin_prog(1);
 }
 
 void p18qxx_bulk_erase(void)
 {
     isp_send_8_msb(0x18);
-    _delay_us(2);
+    delay_us(2);
     isp_send_24_msb(0x00001e);    // Bit 3: Configuration memory Bit 1: Flash memory
-    _delay_ms(11);
+    delay_ms(11);
 }
 
 void p18q_isp_write_pgm(unsigned int * data, unsigned long addr, unsigned char n)
 {
     unsigned char i;
-    //  DELAY3;
     p16c_set_pc(addr);
     for (i=0; i < n; i++) {
         isp_send_8_msb(0xE0);
-        _delay_us(2);
+        delay_us(2);
         isp_send_24_msb(data[i]);
-        _delay_us(75);
+        delay_us(75);
     }
 }
 
 void p18q_isp_write_cfg(unsigned int data, unsigned long addr)
 {
-    unsigned char i;
-    //  DELAY3;
     p16c_set_pc(addr);
     isp_send_8_msb(0xE0);
-    _delay_us(2);
+    delay_us(2);
     isp_send_24_msb(data);
-    _delay_ms(11);
+    delay_ms(11);
 }
 
 #if defined(ARDUINO_AVR_UNO)
@@ -1002,9 +1031,7 @@ uint8_t usart_rx_b(void)
 {
     return (uint8_t) UDR0;
 }
-#endif
-
-#if defined(ARDUINO_AVR_LEONARDO)
+#elif defined(ARDUINO_AVR_LEONARDO)
 void usart_tx_b(uint8_t data)
 {
     Serial.write(data);
@@ -1019,6 +1046,21 @@ uint8_t usart_rx_b(void)
 {
     return (uint8_t)Serial.read();
 }
+#elif defined(ARDUINO_ARCH_STM32)
+void usart_tx_b(uint8_t data)
+{
+    Serial.write(data);
+}
+
+uint8_t usart_rx_rdy(void)
+{
+    return Serial.available() > 0 ? 1 : 0;
+}
+
+uint8_t usart_rx_b(void)
+{
+    return (uint8_t)Serial.read();
+}
 #endif
 
 // #define fw_pp_ops_delay(n) do { uint8_t count = (n); while (0 < count--) _delay_us(10); } while (0)
@@ -1026,4 +1068,4 @@ uint8_t usart_rx_b(void)
 // #define fw_pp_ops_clk_delay() fw_pp_ops_delay(pp_params[PP_PARAM_CLK_DELAY])
 #define fw_pp_ops_clk_delay() DELAY
 
-#include "pp_ops/fw_pp_ops.c"
+#include "fw_pp_ops/fw_pp_ops.c"
